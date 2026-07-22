@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      IG_USERNAME: ${IG_USERNAME:?IG_USERNAME is required}
+      IG_PASSWORD: ${IG_PASSWORD:?IG_PASSWORD is required}
+      IG_SESSION_FILE: /app/data/session.json
+    command:
+      - python
+      - main.py
+      - --csv
+      - /app/config/users.csv
+      - --bootstrap-server
+      - ${KAFKA_BOOTSTRAP_SERVER:-kafka:9092}
+    volumes:
+      - ${USERS_CSV_PATH:-./users.csv}:/app/config/users.csv:ro
+      - ${SESSION_DIR_PATH:-./data}:/app/data
+    networks:
+      - instagram-network
+
+networks:
+  instagram-network:
+    external: true
+    name: instagram-network

@@ -1,10 +1,8 @@
 from instagrapi import Client
-from src.services.kafka.producer import KafkaService
 
 class UserService:
     def __init__(self, client: Client):
         self.cl = client
-        self.kafka = KafkaService()
 
     def get_user_info_by_username(self, username: str):
         """Acesso direto à API para uso no orquestrador."""
@@ -80,4 +78,3 @@ class UserService:
         except Exception as e:
             print(f"Erro ao fazer login: {e}")
             return
-    

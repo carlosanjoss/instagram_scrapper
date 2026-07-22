@@ -1,10 +1,8 @@
 from instagrapi import Client
-from src.services.kafka.producer import KafkaService
 
 class HashtagService:
     def __init__(self, client: Client):
         self.cl = client
-        self.kafka = KafkaService()
 
     def info_hashtag(self, hashtag: str):
         """Informações de uma hashtag específica."""

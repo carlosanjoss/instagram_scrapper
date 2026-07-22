@@ -1,24 +1,20 @@
 from instagrapi import Client
-from src.services.kafka.producer import KafkaService
-from src.utils.formatters import convert_model_to_json
 
 class HighlightService:
 
     def __init__(self, client: Client):
         self.cl = client
-        self.kafka = KafkaService()
+
+    def get_highlight(self, highlight_id: str):
+        """Busca um destaque e propaga falhas para a camada chamadora."""
+        return self.cl.highlight_info(highlight_id)
 
     def process_highlight_task(self, user_id: str, highlight_id: str):
-        """Tratamento e envio para o Kafka."""
+        """Compatibilidade: busca um destaque sem publicá-lo diretamente."""
         try:
-            highlight = self.cl.highlight_info(highlight_id)
-            self.kafka.send_to_topic(
-                topic="instagram.highlights.data",
-                key=user_id,
-                data=convert_model_to_json(highlight)
-            )
+            return self.get_highlight(highlight_id)
         except Exception as e:
-            print(f"❌ Erro ao buscar destaque {highlight_id}: {e}")
+            print(f"Erro ao buscar destaque {highlight_id}: {e}")
             return
 
     def info_highlight(self, highlight_id: str):

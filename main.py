@@ -10,9 +10,10 @@ from dotenv import find_dotenv, load_dotenv
 from src.auth.autenticacao import login_with_persistence
 from src.services.orchestrator.orchestrator import InstagramKafkaOrchestrator
 from src.services.kafka.producer import KafkaService
+from src.services.orchestrator.task_contract import create_fetch_user_task
 
 
-def load_usernames_from_csv(csv_path: str, username_column: str = "username") -> List[str]:
+def load_usernames_from_csv(csv_path: str) -> List[str]:
     path = Path(csv_path)
     if not path.exists():
         raise FileNotFoundError(f"CSV não encontrado: {csv_path}")
@@ -35,9 +36,9 @@ def load_usernames_from_csv(csv_path: str, username_column: str = "username") ->
 
         if has_header:
             reader = csv.DictReader(file_obj, dialect=dialect)
-            if reader.fieldnames and username_column in reader.fieldnames:
+            if reader.fieldnames and "username" in reader.fieldnames:
                 for row in reader:
-                    value = (row.get(username_column) or "").strip()
+                    value = (row.get("username") or "").strip()
                     if value:
                         usernames.append(value)
                 return usernames
@@ -45,7 +46,7 @@ def load_usernames_from_csv(csv_path: str, username_column: str = "username") ->
         file_obj.seek(0)
         raw_reader = csv.reader(file_obj, dialect=dialect)
         for row in raw_reader:
-            if row and row[0].strip() and row[0].strip().lower() != username_column.lower():
+            if row and row[0].strip() and row[0].strip().lower() != "username":
                 usernames.append(row[0].strip())
     return usernames
 
@@ -54,17 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Inicia pipeline completo de coleta Instagram via Kafka"
     )
-    parser.add_argument("--csv", dest="csv_path", help="Caminho do CSV com lista de usuários")
     parser.add_argument(
-        "--users",
-        dest="users",
-        help="Lista de usuários separada por vírgula (ex: user1,user2)",
-    )
-    parser.add_argument(
-        "--username-column",
-        dest="username_column",
-        default="username",
-        help="Nome da coluna no CSV onde está o username",
+        "--csv",
+        dest="csv_path",
+        default="users.csv",
+        help="Caminho do CSV com lista de usuários (padrão: users.csv)",
     )
     parser.add_argument("--media-limit", type=int, default=10)
     parser.add_argument("--stories-limit", type=int, default=10)
@@ -73,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-state-topic", default="instagram.user.latest")
     parser.add_argument("--media-comments-state-topic", default="instagram.media.comments.latest")
     parser.add_argument("--user-stories-state-topic", default="instagram.user.stories.latest")
+    parser.add_argument("--processed-task-topic", default="instagram.tasks.processed")
     parser.add_argument("--bootstrap-server", default="localhost:29092")
     parser.add_argument("--group-id", default="instagram-orchestrator-workers")
     parser.add_argument("--delay-min", type=float, default=8.0)
@@ -91,15 +87,14 @@ def enqueue_tasks(
 ) -> None:
     kafka = KafkaService(bootstrap_servers=bootstrap_server)
     for username in usernames:
-        task = {
-            "type": "fetch_user",
-            "username": username,
-            "media_limit": media_limit,
-            "stories_limit": stories_limit,
-            "comments_limit": comments_limit,
-        }
+        task = create_fetch_user_task(
+            username,
+            media_limit=media_limit,
+            stories_limit=stories_limit,
+            comments_limit=comments_limit,
+        )
         kafka.send_to_topic(topic=task_topic, key=username, data=task)
-        print(f"✅ Tarefa enfileirada para @{username}")
+        print(f"Tarefa enfileirada para @{username}")
 
 
 def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
@@ -110,6 +105,7 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
         user_state_topic=args.user_state_topic,
         media_comments_state_topic=args.media_comments_state_topic,
         user_stories_state_topic=args.user_stories_state_topic,
+        processed_task_topic=args.processed_task_topic,
         bootstrap_servers=args.bootstrap_server,
         consumer_group=args.group_id,
         min_delay_seconds=args.delay_min,
@@ -124,7 +120,7 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
     cycle = 0
     while True:
         cycle += 1
-        print(f"\n🔄 Ciclo #{cycle} - Enfileirando {len(usernames)} usuários...")
+        print(f"\nCiclo #{cycle} - Enfileirando {len(usernames)} usuários...")
         enqueue_tasks(
             usernames=usernames,
             media_limit=args.media_limit,
@@ -133,25 +129,16 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
             task_topic=args.task_topic,
             bootstrap_server=args.bootstrap_server,
         )
-        print(f"📦 Total de tarefas enviadas para {args.task_topic}: {len(usernames)}")
-        print(f"⏳ Próximo ciclo em {args.cycle_interval}s...")
+        print(f"Total de tarefas enviadas para {args.task_topic}: {len(usernames)}")
+        print(f"Próximo ciclo em {args.cycle_interval}s...")
         time.sleep(args.cycle_interval)
 
 if __name__ == "__main__":
     load_dotenv(find_dotenv())
     args = parse_args()
 
-    csv_users: List[str] = []
-    cli_users: List[str] = []
-
-    if args.csv_path:
-        csv_users = load_usernames_from_csv(args.csv_path, username_column=args.username_column)
-
-    if args.users:
-        cli_users = [value.strip() for value in args.users.split(",") if value.strip()]
-
-    usernames = csv_users + cli_users
+    usernames = load_usernames_from_csv(args.csv_path)
     if not usernames:
-        raise ValueError("Informe ao menos uma fonte de usuários: --csv ou --users")
+        raise ValueError("Nenhum usuário encontrado no arquivo CSV")
 
     run_pipeline(args=args, usernames=usernames)

@@ -1,0 +1,18 @@
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      IG_USERNAME: ${IG_USERNAME:?IG_USERNAME is required}
+      IG_PASSWORD: ${IG_PASSWORD:?IG_PASSWORD is required}
+      IG_SESSION_FILE: /app/data/session.json
+    command:
+      - python
+      - main.py
+      - --csv
+      - /app/config/users.csv
+      - --bootstrap-server
+      - ${KAFKA_BOOTSTRAP_SERVER:?KAFKA_BOOTSTRAP_SERVER is required}
+    volumes:
+      - ${USERS_CSV_PATH:?USERS_CSV_PATH is required}:/app/config/users.csv:ro
+      - ${SESSION_DIR_PATH:?SESSION_DIR_PATH is required}:/app/data

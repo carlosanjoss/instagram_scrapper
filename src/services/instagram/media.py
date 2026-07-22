@@ -1,11 +1,8 @@
 from instagrapi import Client
-from src.services.kafka.producer import KafkaService
-from src.utils.formatters import convert_model_to_json
 
 class MediaService:
     def __init__(self, client: Client):
         self.cl = client
-        self.kafka = KafkaService()
 
     def get_user_medias(self, user_id: str, amount: int = 10):
         """Acesso direto à API para buscar mídias por user_id."""

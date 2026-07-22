@@ -1,1 +1,7 @@
 .env
+__pycache__
+session.json
+src/auth/session.json
+data/
+venv
+.agents
