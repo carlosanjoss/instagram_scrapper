@@ -21,4 +21,5 @@ def login_with_sessionid(sessionid: str) -> Client:
     """Return Client logged in only with a sessionid."""
     cl = Client()
     cl.login_by_sessionid(sessionid)
+    cl.dump_settings(str(SESSION_FILE))
     return cl

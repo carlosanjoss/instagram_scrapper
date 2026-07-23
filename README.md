@@ -61,6 +61,8 @@ Suba o Kafka fornecido pelo projeto:
 docker compose -f kafka/docker-compose.yml up -d
 ```
 
+Os tópicos são criados dinamicamente pelo produtor na primeira execução, então não há mais um serviço separado de inicialização no Compose.
+
 Execute a aplicação:
 
 ```bash
@@ -175,7 +177,7 @@ USERS_CSV_PATH=/opt/instagram/users.csv
 SESSION_DIR_PATH=/opt/instagram/session
 ```
 
-Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Compose do Kafka deve ser iniciado antes do Compose da aplicação.
+Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Compose do Kafka deve ser iniciado antes do Compose da aplicação. A criação dos tópicos acontece no próprio produtor, então basta o broker estar acessível.
 
 ## Imagem de produção
 
