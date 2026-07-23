@@ -3,7 +3,7 @@ from typing import Any
 
 from src.services.instagram.media import MediaService
 from src.services.instagram.user import UserService
-from src.services.orchestrator.handlers.common import model_payload
+from src.services.orchestrator.handlers.common import first_value, model_payload
 from src.services.orchestrator.snapshot_repository import SnapshotRepository
 from src.services.orchestrator.task_contract import HandlerResult, Task, child_task_id
 
@@ -15,12 +15,14 @@ class FetchUserHandler:
         media_service: MediaService,
         snapshots: SnapshotRepository,
         task_topic: str,
+        user_observation_topic: str,
         delay: Callable[[str], None],
     ) -> None:
         self.user_service = user_service
         self.media_service = media_service
         self.snapshots = snapshots
         self.task_topic = task_topic
+        self.user_observation_topic = user_observation_topic
         self.delay = delay
 
     def handle(self, task: Task) -> HandlerResult:
@@ -35,7 +37,15 @@ class FetchUserHandler:
         user_info = self.user_service.get_user_info_by_username(username)
         user_payload = model_payload(user_info)
         user_id = str(user_info.pk)
+        followers_count = first_value(user_payload, "follower_count", "followers_count")
         previous = self.snapshots.load(SnapshotRepository.USER, user_id)
+        result.records.append((self.user_observation_topic, user_id, self.snapshots.timestamped({
+            "schema_version": 1, "user_id": user_id, "username": username,
+            "followers_count": followers_count,
+            "following_count": first_value(user_payload, "following_count"),
+            "media_count": self.snapshots.extract_media_count(user_payload),
+            "is_private": user_payload.get("is_private"),
+        })))
 
         if not self.snapshots.profile(previous) or self.snapshots.profile(previous) != self.snapshots.profile(user_payload):
             result.records.append(("instagram.user.data", str(user_info.pk), user_payload))
@@ -64,30 +74,28 @@ class FetchUserHandler:
         result.records.append((self.task_topic, user_id, story_task))
 
         amount = media_limit
-        should_fetch = True
         if previous_count is not None and current_count is not None:
             delta = current_count - previous_count
             if delta <= 0:
-                print(f"Sem novas mídias para @{username}. Anterior={previous_count}, Atual={current_count}")
-                should_fetch = False
+                print(f"Sem novas mídias para @{username}; recoletando {amount} recentes para a série temporal.")
             else:
-                amount = min(media_limit, delta)
-                print(f"Mudança detectada para @{username}. Anterior={previous_count}, Atual={current_count}, novas={delta}, coletando={amount}")
+                print(f"Mudança detectada para @{username}. Anterior={previous_count}, Atual={current_count}, novas={delta}; recoletando {amount} recentes.")
         else:
             print(f"Sem snapshot anterior para @{username}. Coletando baseline de {amount} mídias.")
 
-        if should_fetch:
-            medias = self.media_service.get_user_medias(user_id, amount=amount)
-            self.delay("user_medias")
-            print(f"Mídias encontradas para {username}: {len(medias)}")
-            for media in medias:
-                media_task: dict[str, Any] = {
-                    "task_id": child_task_id(root_task_id, "media", media.pk),
-                    "root_task_id": root_task_id,
-                    "type": "fetch_media",
-                    "user_id": user_id,
-                    "media_id": str(media.pk),
-                    "comments_limit": comments_limit,
-                }
-                result.records.append((self.task_topic, user_id, media_task))
+        medias = self.media_service.get_user_medias(user_id, amount=amount)
+        self.delay("user_medias")
+        print(f"Mídias encontradas para {username}: {len(medias)}")
+        for media in medias:
+            media_task: dict[str, Any] = {
+                "task_id": child_task_id(root_task_id, "media", media.pk),
+                "root_task_id": root_task_id,
+                "type": "fetch_media",
+                "user_id": user_id,
+                "username": username,
+                "followers_count": followers_count,
+                "media_id": str(media.pk),
+                "comments_limit": comments_limit,
+            }
+            result.records.append((self.task_topic, user_id, media_task))
         return result

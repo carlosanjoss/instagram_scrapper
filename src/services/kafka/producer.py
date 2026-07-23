@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, Iterable, Tuple
 
 from kafka import KafkaConsumer, KafkaProducer, TopicPartition
+from kafka.admin import KafkaAdminClient, NewTopic
 
 
 KafkaRecord = Tuple[str, str | None, Dict[str, Any]]
@@ -10,8 +11,23 @@ KafkaRecord = Tuple[str, str | None, Dict[str, Any]]
 class KafkaService:
     """Produz registros comuns e commits Kafka atômicos."""
 
+    DEFAULT_TOPICS = (
+        {"name": "instagram.tasks"},
+        {"name": "instagram.user.data"},
+        {"name": "instagram.media.data"},
+        {"name": "instagram.user.observations", "retention_ms": 15552000000},
+        {"name": "instagram.media.observations", "retention_ms": 15552000000},
+        {"name": "instagram.comments.data"},
+        {"name": "instagram.stories.data"},
+        {"name": "instagram.tasks.processed", "cleanup_policy": "compact"},
+        {"name": "instagram.user.latest", "cleanup_policy": "compact"},
+        {"name": "instagram.media.comments.latest", "cleanup_policy": "compact"},
+        {"name": "instagram.user.stories.latest", "cleanup_policy": "compact"},
+    )
+
     def __init__(self, bootstrap_servers: str = "localhost:29092", transactional_id: str | None = None):
         self.bootstrap_servers = bootstrap_servers
+        self._ensure_topics()
         options = {
             "bootstrap_servers": [bootstrap_servers],
             "acks": "all",
@@ -24,6 +40,33 @@ class KafkaService:
         self.transactional = transactional_id is not None
         if self.transactional:
             self.producer.init_transactions()
+
+    def _ensure_topics(self) -> None:
+        admin = KafkaAdminClient(bootstrap_servers=[self.bootstrap_servers], client_id="instagram-kafka-admin")
+        try:
+            existing = set(admin.list_topics())
+            topics = []
+            for topic in self.DEFAULT_TOPICS:
+                name = topic["name"]
+                if name in existing:
+                    continue
+                configs = {}
+                if topic.get("retention_ms") is not None:
+                    configs["retention.ms"] = str(topic["retention_ms"])
+                if topic.get("cleanup_policy") is not None:
+                    configs["cleanup.policy"] = topic["cleanup_policy"]
+                topics.append(
+                    NewTopic(
+                        name=name,
+                        num_partitions=1,
+                        replication_factor=1,
+                        topic_configs=configs or None,
+                    )
+                )
+            if topics:
+                admin.create_topics(new_topics=topics, validate_only=False)
+        finally:
+            admin.close()
 
     @staticmethod
     def _serialize(data: Any) -> bytes:

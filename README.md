@@ -61,6 +61,8 @@ Suba o Kafka fornecido pelo projeto:
 docker compose -f kafka/docker-compose.yml up -d
 ```
 
+Os tópicos são criados dinamicamente pelo produtor na primeira execução, então não há mais um serviço separado de inicialização no Compose.
+
 Execute a aplicação:
 
 ```bash
@@ -175,7 +177,7 @@ USERS_CSV_PATH=/opt/instagram/users.csv
 SESSION_DIR_PATH=/opt/instagram/session
 ```
 
-Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Compose do Kafka deve ser iniciado antes do Compose da aplicação.
+Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Compose do Kafka deve ser iniciado antes do Compose da aplicação. A criação dos tópicos acontece no próprio produtor, então basta o broker estar acessível.
 
 ## Imagem de produção
 
@@ -299,6 +301,24 @@ instagram.stories.data
 instagram.user.latest
 instagram.media.comments.latest
 instagram.user.stories.latest
+instagram.user.observations
+instagram.media.observations
 ```
 
 Os tópicos `*.latest` e `instagram.tasks.processed` utilizam compactação. Em um Kafka externo, esses tópicos precisam ser provisionados pela infraestrutura do servidor.
+
+## Série temporal de distribuição
+
+A cada ciclo, o coletor consulta novamente as mídias recentes e grava eventos
+imutáveis em `instagram.user.observations` e
+`instagram.media.observations`. As observações incluem horário da coleta, idade
+da publicação, seguidores, curtidas, comentários, visualizações e reproduções.
+
+Os campos `reach`, `impressions`, `non_follower_reach` e
+`hashtag_visible` ficam nulos quando a fonte não oferece essas métricas. Os
+tópicos locais têm retenção de 180 dias; em produção, envie-os também para um
+armazenamento analítico permanente.
+
+O número de posts reobservados é controlado por `--media-limit`. Esses dados
+permitem estimar redução de distribuição, mas não confirmar diretamente um
+shadowban.

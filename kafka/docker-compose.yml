@@ -30,34 +30,6 @@ services:
       retries: 20
       start_period: 10s
 
-  kafka-init:
-    image: apache/kafka:latest
-    restart: "no"
-    depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      - instagram-network
-    command:
-      - bash
-      - -c
-      - |
-        set -e
-        create_topic() {
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
-            --create --if-not-exists --topic "$$1" \
-            --partitions 1 --replication-factor 1 $${2:-}
-        }
-        create_topic instagram.tasks
-        create_topic instagram.user.data
-        create_topic instagram.media.data
-        create_topic instagram.comments.data
-        create_topic instagram.stories.data
-        create_topic instagram.tasks.processed "--config cleanup.policy=compact"
-        create_topic instagram.user.latest "--config cleanup.policy=compact"
-        create_topic instagram.media.comments.latest "--config cleanup.policy=compact"
-        create_topic instagram.user.stories.latest "--config cleanup.policy=compact"
-
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui

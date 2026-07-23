@@ -37,6 +37,8 @@ class InstagramKafkaOrchestrator:
         media_comments_state_topic: str = "instagram.media.comments.latest",
         user_stories_state_topic: str = "instagram.user.stories.latest",
         processed_task_topic: str = "instagram.tasks.processed",
+        user_observation_topic: str = "instagram.user.observations",
+        media_observation_topic: str = "instagram.media.observations",
         bootstrap_servers: str = "localhost:29092",
         consumer_group: str = "instagram-orchestrator-workers",
         min_delay_seconds: float = 8.0,
@@ -68,12 +70,14 @@ class InstagramKafkaOrchestrator:
                 media_service=media_service,
                 snapshots=self.snapshots,
                 task_topic=task_topic,
+                user_observation_topic=user_observation_topic,
                 delay=self._human_delay,
             ),
             "fetch_media": FetchMediaHandler(
                 media_service=media_service,
                 snapshots=self.snapshots,
                 task_topic=task_topic,
+                media_observation_topic=media_observation_topic,
                 delay=self._human_delay,
             ),
             "fetch_story": FetchStoryHandler(
