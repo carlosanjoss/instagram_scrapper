@@ -1,16 +1,17 @@
 from collections.abc import Callable
 
 from src.services.instagram.media import MediaService
-from src.services.orchestrator.handlers.common import model_payload
+from src.services.orchestrator.handlers.common import media_observation, model_payload
 from src.services.orchestrator.snapshot_repository import SnapshotRepository
 from src.services.orchestrator.task_contract import HandlerResult, Task, child_task_id
 
 
 class FetchMediaHandler:
-    def __init__(self, media_service: MediaService, snapshots: SnapshotRepository, task_topic: str, delay: Callable[[str], None]) -> None:
+    def __init__(self, media_service: MediaService, snapshots: SnapshotRepository, task_topic: str, media_observation_topic: str, delay: Callable[[str], None]) -> None:
         self.media_service = media_service
         self.snapshots = snapshots
         self.task_topic = task_topic
+        self.media_observation_topic = media_observation_topic
         self.delay = delay
 
     def handle(self, task: Task) -> HandlerResult:
@@ -24,6 +25,11 @@ class FetchMediaHandler:
         media = self.media_service.get_media_info(media_id)
         payload = model_payload(media)
         result.records.append(("instagram.media.data", user_id, payload))
+        result.records.append((self.media_observation_topic, media_id, media_observation(
+            payload, user_id,
+            str(task["username"]) if task.get("username") else None,
+            int(task["followers_count"]) if task.get("followers_count") is not None else None,
+        )))
         self.delay("media_info")
 
         previous = self.snapshots.load(SnapshotRepository.MEDIA_COMMENTS, media_id)

@@ -69,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--media-comments-state-topic", default="instagram.media.comments.latest")
     parser.add_argument("--user-stories-state-topic", default="instagram.user.stories.latest")
     parser.add_argument("--processed-task-topic", default="instagram.tasks.processed")
+    parser.add_argument("--user-observation-topic", default="instagram.user.observations")
+    parser.add_argument("--media-observation-topic", default="instagram.media.observations")
     parser.add_argument("--bootstrap-server", default="localhost:29092")
     parser.add_argument("--group-id", default="instagram-orchestrator-workers")
     parser.add_argument("--delay-min", type=float, default=8.0)
@@ -106,6 +108,8 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
         media_comments_state_topic=args.media_comments_state_topic,
         user_stories_state_topic=args.user_stories_state_topic,
         processed_task_topic=args.processed_task_topic,
+        user_observation_topic=args.user_observation_topic,
+        media_observation_topic=args.media_observation_topic,
         bootstrap_servers=args.bootstrap_server,
         consumer_group=args.group_id,
         min_delay_seconds=args.delay_min,

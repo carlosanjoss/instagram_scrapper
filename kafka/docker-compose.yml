@@ -51,6 +51,8 @@ services:
         create_topic instagram.tasks
         create_topic instagram.user.data
         create_topic instagram.media.data
+        create_topic instagram.user.observations "--config retention.ms=15552000000"
+        create_topic instagram.media.observations "--config retention.ms=15552000000"
         create_topic instagram.comments.data
         create_topic instagram.stories.data
         create_topic instagram.tasks.processed "--config cleanup.policy=compact"
