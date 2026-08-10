@@ -3,6 +3,8 @@ from typing import Callable
 
 from kafka import KafkaConsumer
 
+from src.services.kafka.config import kafka_connection_options
+
 
 class KafkaTaskConsumer:
     """Consumidor coordenado por grupo; o handler confirma offsets via transação."""
@@ -15,7 +17,7 @@ class KafkaTaskConsumer:
     def consume(self, handler: Callable[[object, object], bool], ready_event=None) -> None:
         consumer = KafkaConsumer(
             self.topic,
-            bootstrap_servers=[self.bootstrap_servers],
+            **kafka_connection_options(self.bootstrap_servers),
             group_id=self.group_id,
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             auto_offset_reset="earliest",

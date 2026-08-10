@@ -4,6 +4,8 @@ from typing import Any, Dict, Iterable, Tuple
 from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.admin import KafkaAdminClient, NewTopic
 
+from src.services.kafka.config import kafka_connection_options
+
 
 KafkaRecord = Tuple[str, str | None, Dict[str, Any]]
 
@@ -27,9 +29,10 @@ class KafkaService:
 
     def __init__(self, bootstrap_servers: str = "localhost:29092", transactional_id: str | None = None):
         self.bootstrap_servers = bootstrap_servers
+        self.connection_options = kafka_connection_options(bootstrap_servers)
         self._ensure_topics()
         options = {
-            "bootstrap_servers": [bootstrap_servers],
+            **self.connection_options,
             "acks": "all",
             "retries": 5,
         }
@@ -42,7 +45,7 @@ class KafkaService:
             self.producer.init_transactions()
 
     def _ensure_topics(self) -> None:
-        admin = KafkaAdminClient(bootstrap_servers=[self.bootstrap_servers], client_id="instagram-kafka-admin")
+        admin = KafkaAdminClient(**self.connection_options, client_id="instagram-kafka-admin")
         try:
             existing = set(admin.list_topics())
             topics = []
@@ -101,7 +104,7 @@ class KafkaService:
 
     def get_all_latest_by_key(self, topic: str) -> Dict[str, Dict[str, Any]]:
         consumer = KafkaConsumer(
-            bootstrap_servers=[self.bootstrap_servers],
+            **self.connection_options,
             value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m is not None else None,
             key_deserializer=lambda m: m.decode("utf-8") if m else None,
             enable_auto_commit=False,
