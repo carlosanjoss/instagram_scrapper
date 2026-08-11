@@ -156,11 +156,19 @@ class InstagramKafkaOrchestrator:
             self._human_delay("entre_tarefas")
         return True
 
-    def run_consumer(self, ready_event: Event | None = None) -> None:
-        consumer = KafkaTaskConsumer(
-            topic=self.task_topic,
-            bootstrap_servers=self.bootstrap_servers,
-            group_id=self.consumer_group,
-        )
-        print(f"Orquestrador online. Consumindo tarefas em {self.task_topic}")
-        consumer.consume(self._handle_task, ready_event=ready_event)
+    def run_consumer(
+        self,
+        ready_event: Event | None = None,
+        stopped_event: Event | None = None,
+    ) -> None:
+        try:
+            consumer = KafkaTaskConsumer(
+                topic=self.task_topic,
+                bootstrap_servers=self.bootstrap_servers,
+                group_id=self.consumer_group,
+            )
+            print(f"Orquestrador online. Consumindo tarefas em {self.task_topic}")
+            consumer.consume(self._handle_task, ready_event=ready_event)
+        finally:
+            if stopped_event is not None:
+                stopped_event.set()

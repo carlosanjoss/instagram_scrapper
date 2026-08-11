@@ -1,6 +1,5 @@
 import argparse
 import csv
-import time
 from pathlib import Path
 from threading import Event, Thread
 from typing import List
@@ -117,12 +116,20 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
     )
 
     ready_event = Event()
-    consumer_thread = Thread(target=orchestrator.run_consumer, kwargs={"ready_event": ready_event}, daemon=True)
+    stopped_event = Event()
+    consumer_thread = Thread(
+        target=orchestrator.run_consumer,
+        kwargs={"ready_event": ready_event, "stopped_event": stopped_event},
+        daemon=True,
+    )
     consumer_thread.start()
     ready_event.wait(timeout=15)
 
+    if not ready_event.is_set() or stopped_event.is_set():
+        raise RuntimeError("Consumidor Kafka não iniciou corretamente")
+
     cycle = 0
-    while True:
+    while not stopped_event.is_set():
         cycle += 1
         print(f"\nCiclo #{cycle} - Enfileirando {len(usernames)} usuários...")
         enqueue_tasks(
@@ -135,7 +142,14 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
         )
         print(f"Total de tarefas enviadas para {args.task_topic}: {len(usernames)}")
         print(f"Próximo ciclo em {args.cycle_interval}s...")
-        time.sleep(args.cycle_interval)
+        if stopped_event.wait(args.cycle_interval):
+            break
+
+    print(
+        "Consumidor interrompido. Novos ciclos não serão enfileirados; "
+        "reinicie o container manualmente após verificar a conta."
+    )
+    Event().wait()
 
 if __name__ == "__main__":
     load_dotenv(find_dotenv())
