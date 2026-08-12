@@ -12,7 +12,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY main.py ./
 COPY src ./src
-COPY users.csv ./users.csv
 
 RUN groupadd --system app && \
     useradd --system --gid app --home-dir /app app && \
