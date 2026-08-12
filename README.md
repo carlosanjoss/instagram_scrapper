@@ -44,7 +44,7 @@ No PowerShell:
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r SOURCE/requirements.txt
 ```
 
 No Git Bash:
@@ -52,7 +52,7 @@ No Git Bash:
 ```bash
 python -m venv venv
 source venv/Scripts/activate
-python -m pip install -r requirements.txt
+python -m pip install -r SOURCE/requirements.txt
 ```
 
 Suba o Kafka fornecido pelo projeto:
@@ -66,7 +66,7 @@ Os tópicos são criados dinamicamente pelo produtor na primeira execução, ent
 Execute a aplicação:
 
 ```bash
-python main.py
+python SOURCE/main.py
 ```
 
 O padrão para uma execução local é:
@@ -81,33 +81,33 @@ O padrão para uma execução local é:
 Para escolher outro CSV:
 
 ```bash
-python main.py --csv "C:/dados/instagram/users.csv"
+python SOURCE/main.py --csv "C:/dados/instagram/users.csv"
 ```
 
 No PowerShell, configure o arquivo da sessão assim:
 
 ```powershell
 $env:IG_SESSION_FILE = "C:\dados\instagram\session.json"
-python main.py --csv "C:\dados\instagram\users.csv"
+python SOURCE/main.py --csv "C:\dados\instagram\users.csv"
 ```
 
 No Git Bash:
 
 ```bash
 export IG_SESSION_FILE="C:/dados/instagram/session.json"
-python main.py --csv "C:/dados/instagram/users.csv"
+python SOURCE/main.py --csv "C:/dados/instagram/users.csv"
 ```
 
 Para usar outro servidor Kafka:
 
 ```bash
-python main.py --bootstrap-server "kafka.exemplo.com:9092"
+python SOURCE/main.py --bootstrap-server "kafka.exemplo.com:9092"
 ```
 
 Algumas configurações disponíveis:
 
 ```bash
-python main.py \
+python SOURCE/main.py \
   --csv users.csv \
   --bootstrap-server localhost:29092 \
   --cycle-interval 3600 \
@@ -118,7 +118,7 @@ python main.py \
   --delay-max 40
 ```
 
-Use `python main.py --help` para consultar todas as opções.
+Use `python SOURCE/main.py --help` para consultar todas as opções.
 
 ## Execução com Docker
 
@@ -181,7 +181,7 @@ Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Com
 
 ## Imagem de produção
 
-O `Dockerfile` constrói a imagem da aplicação. Em produção, prefira construir e publicar essa imagem no pipeline de CI/CD; o servidor deve apenas baixá-la e executá-la.
+O `SOURCE/Dockerfile` constrói a imagem da aplicação usando somente `SOURCE` como contexto. Em produção, prefira construir e publicar essa imagem no pipeline de CI/CD; o servidor deve apenas baixá-la e executá-la.
 
 Construa uma versão localmente ou no pipeline:
 
