@@ -1,8 +1,10 @@
 import random
 import time
 from collections.abc import Callable
+from typing import TypeVar
 
-from src.services.orchestrator.task_contract import HandlerResult
+
+T = TypeVar("T")
 
 
 class RetryPolicy:
@@ -29,6 +31,8 @@ class RetryPolicy:
     )
 
     def __init__(self, attempts: int = 3) -> None:
+        if attempts < 1:
+            raise ValueError("A quantidade de tentativas deve ser positiva")
         self.attempts = attempts
 
     @classmethod
@@ -41,17 +45,23 @@ class RetryPolicy:
         error_text = "\n".join(parts).lower()
         return any(marker in error_text for marker in cls.FATAL_MARKERS)
 
-    def execute(self, operation: Callable[[], HandlerResult]) -> HandlerResult:
+    def execute(self, operation: Callable[[], T]) -> T:
         for attempt in range(1, self.attempts + 1):
             try:
                 return operation()
             except Exception as exc:
                 if self.is_fatal(exc):
-                    print(f"Coleta interrompida sem retry por erro de segurança/limite: {exc}")
+                    print(
+                        "Coleta interrompida sem retry por erro de segurança/limite: "
+                        f"{exc}"
+                    )
                     raise
                 if attempt == self.attempts:
                     raise
                 delay = (2 ** (attempt - 1)) + random.uniform(0, 1)
-                print(f"Falha transitória; tentativa {attempt}/{self.attempts}. Retry em {delay:.2f}s: {exc}")
+                print(
+                    f"Falha transitória; tentativa {attempt}/{self.attempts}. "
+                    f"Retry em {delay:.2f}s: {exc}"
+                )
                 time.sleep(delay)
         raise RuntimeError("Política de retry finalizada sem resultado")

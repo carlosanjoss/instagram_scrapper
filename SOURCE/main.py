@@ -1,15 +1,14 @@
 import argparse
 import csv
 from pathlib import Path
-from threading import Event, Thread
 from typing import List
 
 from dotenv import find_dotenv, load_dotenv
 
 from src.auth.autenticacao import login_with_persistence
-from src.services.orchestrator.orchestrator import InstagramKafkaOrchestrator
-from src.services.kafka.producer import KafkaService
-from src.services.orchestrator.task_contract import create_fetch_user_task
+from src.services.collector import InstagramJsonCollector
+from src.services.storage import JsonRepository
+from src.utils.retry import RetryPolicy
 
 
 def load_usernames_from_csv(csv_path: str) -> List[str]:
@@ -27,7 +26,6 @@ def load_usernames_from_csv(csv_path: str) -> List[str]:
         except csv.Error:
             dialect = csv.excel
 
-        has_header = False
         try:
             has_header = csv.Sniffer().has_header(sample)
         except csv.Error:
@@ -52,111 +50,86 @@ def load_usernames_from_csv(csv_path: str) -> List[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Inicia pipeline completo de coleta Instagram via Kafka"
+        description="Coleta perfis do Instagram e salva os resultados em JSON"
     )
     parser.add_argument(
         "--csv",
         dest="csv_path",
         default="users.csv",
-        help="Caminho do CSV com lista de usuários (padrão: users.csv)",
+        help="CSV com um username por linha (padrão: users.csv)",
+    )
+    parser.add_argument(
+        "--output",
+        default="data",
+        help="Diretório dos arquivos JSON (padrão: data)",
     )
     parser.add_argument("--media-limit", type=int, default=10)
     parser.add_argument("--stories-limit", type=int, default=10)
     parser.add_argument("--comments-limit", type=int, default=30)
-    parser.add_argument("--task-topic", default="instagram.tasks")
-    parser.add_argument("--user-state-topic", default="instagram.user.latest")
-    parser.add_argument("--media-comments-state-topic", default="instagram.media.comments.latest")
-    parser.add_argument("--user-stories-state-topic", default="instagram.user.stories.latest")
-    parser.add_argument("--processed-task-topic", default="instagram.tasks.processed")
-    parser.add_argument("--user-observation-topic", default="instagram.user.observations")
-    parser.add_argument("--media-observation-topic", default="instagram.media.observations")
-    parser.add_argument("--bootstrap-server", default="localhost:29092")
-    parser.add_argument("--group-id", default="instagram-orchestrator-workers")
     parser.add_argument("--delay-min", type=float, default=8.0)
     parser.add_argument("--delay-max", type=float, default=40.0)
-    parser.add_argument("--cycle-interval", type=int, default=3600, help="Intervalo em segundos entre ciclos de enfileiramento (padrão: 3600s = 1h)")
-    return parser.parse_args()
-
-
-def enqueue_tasks(
-    usernames: List[str],
-    media_limit: int,
-    stories_limit: int,
-    comments_limit: int,
-    task_topic: str,
-    bootstrap_server: str,
-) -> None:
-    kafka = KafkaService(bootstrap_servers=bootstrap_server)
-    for username in usernames:
-        task = create_fetch_user_task(
-            username,
-            media_limit=media_limit,
-            stories_limit=stories_limit,
-            comments_limit=comments_limit,
-        )
-        kafka.send_to_topic(topic=task_topic, key=username, data=task)
-        print(f"Tarefa enfileirada para @{username}")
+    parser.add_argument(
+        "--cycle-interval",
+        type=int,
+        default=3600,
+        help="Intervalo entre ciclos em segundos (padrão: 3600)",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Executa somente um ciclo de coleta",
+    )
+    args = parser.parse_args()
+    for name in ("media_limit", "stories_limit", "comments_limit"):
+        if getattr(args, name) < 0:
+            parser.error(f"--{name.replace('_', '-')} não pode ser negativo")
+    if args.cycle_interval <= 0:
+        parser.error("--cycle-interval deve ser positivo")
+    if args.delay_min < 0 or args.delay_max < args.delay_min:
+        parser.error("o intervalo entre --delay-min e --delay-max é inválido")
+    return args
 
 
 def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
     client = login_with_persistence()
-    orchestrator = InstagramKafkaOrchestrator(
+    repository = JsonRepository(args.output)
+    collector = InstagramJsonCollector(
         client=client,
-        task_topic=args.task_topic,
-        user_state_topic=args.user_state_topic,
-        media_comments_state_topic=args.media_comments_state_topic,
-        user_stories_state_topic=args.user_stories_state_topic,
-        processed_task_topic=args.processed_task_topic,
-        user_observation_topic=args.user_observation_topic,
-        media_observation_topic=args.media_observation_topic,
-        bootstrap_servers=args.bootstrap_server,
-        consumer_group=args.group_id,
+        repository=repository,
         min_delay_seconds=args.delay_min,
         max_delay_seconds=args.delay_max,
     )
 
-    ready_event = Event()
-    stopped_event = Event()
-    consumer_thread = Thread(
-        target=orchestrator.run_consumer,
-        kwargs={"ready_event": ready_event, "stopped_event": stopped_event},
-        daemon=True,
-    )
-    consumer_thread.start()
-    ready_event.wait(timeout=15)
-
-    if not ready_event.is_set() or stopped_event.is_set():
-        raise RuntimeError("Consumidor Kafka não iniciou corretamente")
-
     cycle = 0
-    while not stopped_event.is_set():
-        cycle += 1
-        print(f"\nCiclo #{cycle} - Enfileirando {len(usernames)} usuários...")
-        enqueue_tasks(
-            usernames=usernames,
-            media_limit=args.media_limit,
-            stories_limit=args.stories_limit,
-            comments_limit=args.comments_limit,
-            task_topic=args.task_topic,
-            bootstrap_server=args.bootstrap_server,
-        )
-        print(f"Total de tarefas enviadas para {args.task_topic}: {len(usernames)}")
-        print(f"Próximo ciclo em {args.cycle_interval}s...")
-        if stopped_event.wait(args.cycle_interval):
-            break
+    try:
+        while True:
+            cycle += 1
+            print(f"\nCiclo #{cycle} - coletando {len(usernames)} usuários")
+            for username in usernames:
+                try:
+                    collector.collect_user(
+                        username,
+                        media_limit=args.media_limit,
+                        stories_limit=args.stories_limit,
+                        comments_limit=args.comments_limit,
+                    )
+                except Exception as exc:
+                    if RetryPolicy.is_fatal(exc):
+                        raise
+                    print(f"Falha ao coletar @{username}; seguindo para o próximo: {exc}")
+            print(f"Dados JSON salvos em: {repository.output_dir.resolve()}")
+            if args.once:
+                return
+            print(f"Próximo ciclo em {args.cycle_interval}s...")
+            collector.sleep(args.cycle_interval)
+    except KeyboardInterrupt:
+        print("\nColeta encerrada pelo usuário.")
 
-    print(
-        "Consumidor interrompido. Novos ciclos não serão enfileirados; "
-        "reinicie o container manualmente após verificar a conta."
-    )
-    Event().wait()
 
 if __name__ == "__main__":
     load_dotenv(find_dotenv())
-    args = parse_args()
-
-    usernames = load_usernames_from_csv(args.csv_path)
-    if not usernames:
+    arguments = parse_args()
+    targets = load_usernames_from_csv(arguments.csv_path)
+    if not targets:
         raise ValueError("Nenhum usuário encontrado no arquivo CSV")
-
-    run_pipeline(args=args, usernames=usernames)
+    run_pipeline(args=arguments, usernames=targets)

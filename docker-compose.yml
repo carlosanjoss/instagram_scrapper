@@ -13,15 +13,8 @@ services:
       - main.py
       - --csv
       - /app/config/users.csv
-      - --bootstrap-server
-      - ${KAFKA_BOOTSTRAP_SERVER:-kafka:9092}
+      - --output
+      - /app/data
     volumes:
       - ${USERS_CSV_PATH:-./users.csv}:/app/config/users.csv:ro
       - ${SESSION_DIR_PATH:-./data}:/app/data
-    networks:
-      - instagram-network
-
-networks:
-  instagram-network:
-    external: true
-    name: instagram-network

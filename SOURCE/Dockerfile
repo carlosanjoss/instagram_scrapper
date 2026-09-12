@@ -20,4 +20,4 @@ RUN groupadd --system app && \
 
 USER app
 
-CMD ["python", "main.py", "--bootstrap-server", "kafka:9092"]
+CMD ["python", "main.py"]

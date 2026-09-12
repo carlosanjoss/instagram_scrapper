@@ -1,3 +1,2 @@
-instagrapi
+instagrapi>=2.18.19,<3
 python-dotenv
-kafka-python>=2.2.0,<3

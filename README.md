@@ -1,324 +1,156 @@
-# Instagram Kafka Collector
+# Instagram JSON Collector — Radar Ódio
 
-Aplicação Python que agenda coletas de perfis do Instagram e processa as tarefas por meio do Kafka. O consumidor utiliza retry, offsets transacionais e controle de idempotência por `task_id`.
+Coletor incremental de perfis, mídias, comentários e stories do Instagram. Os
+dados são persistidos diretamente em arquivos JSON UTF-8, organizados por
+usuário e mídia, sem dependência de Kafka.
 
 ## Pré-requisitos
 
-Para executar localmente:
+- Python 3.10 ou superior; ou
+- Docker e Docker Compose.
 
-- Python 3.10 ou superior
-- Kafka acessível pela aplicação
-
-Para executar com containers:
-
-- Docker
-- Docker Compose
-
-## Configuração
-
-Crie um arquivo `.env` na raiz do projeto:
+Crie um `.env` na raiz:
 
 ```env
 IG_USERNAME=seu_usuario
 IG_PASSWORD=sua_senha
 ```
 
-O `.env` e o arquivo de sessão não devem ser versionados.
+A sessão autenticada é reutilizada pelo arquivo `session.json`. O `.env`, a
+sessão e a pasta `data/` estão ignorados pelo Git.
 
-### Arquivo de usuários
+## Alvos
 
-Por padrão, a aplicação lê `users.csv` na raiz. Informe um usuário por linha, sem necessidade de cabeçalho:
+O coletor lê `users.csv` por padrão. Use um perfil por linha, com ou sem o
+cabeçalho `username`:
 
 ```csv
+username
 usuario1
 usuario2
-usuario3
 ```
 
-## Execução com Python
-
-Crie e ative o ambiente virtual.
-
-No PowerShell:
+## Execução local
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install -r SOURCE/requirements.txt
+python SOURCE/main.py --once
 ```
 
-No Git Bash:
+Sem `--once`, o processo repete a coleta a cada hora:
 
-```bash
-python -m venv venv
-source venv/Scripts/activate
-python -m pip install -r SOURCE/requirements.txt
-```
-
-Suba o Kafka fornecido pelo projeto:
-
-```bash
-docker compose -f kafka/docker-compose.yml up -d
-```
-
-Os tópicos são criados dinamicamente pelo produtor na primeira execução, então não há mais um serviço separado de inicialização no Compose.
-
-Execute a aplicação:
-
-```bash
+```powershell
 python SOURCE/main.py
 ```
 
-O padrão para uma execução local é:
+Opções principais:
 
-- CSV: `users.csv`
-- Sessão: `session.json`
-- Kafka: `localhost:29092`
-- Novo ciclo: a cada 3600 segundos
-
-### Caminhos personalizados com Python
-
-Para escolher outro CSV:
-
-```bash
-python SOURCE/main.py --csv "C:/dados/instagram/users.csv"
+```text
+--csv CAMINHO             CSV de usuários (padrão: users.csv)
+--output DIRETORIO        raiz dos JSONs (padrão: data)
+--media-limit N           mídias recentes por usuário (padrão: 10)
+--stories-limit N         stories por usuário (padrão: 10)
+--comments-limit N        comentários por mídia (padrão: 30)
+--delay-min SEGUNDOS      pausa mínima entre chamadas (padrão: 8)
+--delay-max SEGUNDOS      pausa máxima entre chamadas (padrão: 40)
+--cycle-interval SEGUNDOS intervalo entre ciclos (padrão: 3600)
+--once                    executa um único ciclo
 ```
 
-No PowerShell, configure o arquivo da sessão assim:
+Exemplo:
 
 ```powershell
-$env:IG_SESSION_FILE = "C:\dados\instagram\session.json"
-python SOURCE/main.py --csv "C:\dados\instagram\users.csv"
+python SOURCE/main.py `
+  --csv users.csv `
+  --output data `
+  --media-limit 20 `
+  --stories-limit 10 `
+  --comments-limit 50 `
+  --once
 ```
 
-No Git Bash:
+## Estrutura dos dados
 
-```bash
-export IG_SESSION_FILE="C:/dados/instagram/session.json"
-python SOURCE/main.py --csv "C:/dados/instagram/users.csv"
+```text
+data/
+└── users/
+    └── {user_id}/
+        ├── user.json
+        ├── observations.json
+        ├── stories/
+        │   └── {story_id}.json
+        └── media/
+            └── {media_id}/
+                ├── media.json
+                ├── comments.json
+                └── observations.json
 ```
 
-Para usar outro servidor Kafka:
+- `user.json`: estado mais recente do perfil, com `collected_at`.
+- `observations.json` do usuário: série temporal de seguidores, contas seguidas
+  e quantidade de mídias.
+- `media.json`: estado mais recente da publicação, com `collected_at`.
+- `comments.json`: lista acumulada, deduplicada pelo ID estável do comentário.
+- `observations.json` da mídia: série temporal de curtidas, comentários,
+  visualizações e reproduções.
+- `stories/{story_id}.json`: um arquivo imutável para cada story encontrado.
 
-```bash
-python SOURCE/main.py --bootstrap-server "kafka.exemplo.com:9092"
-```
+Datas são gravadas em ISO 8601 e os arquivos usam `ensure_ascii=False`,
+preservando acentos e emojis. A gravação é atômica: cada JSON é escrito em um
+arquivo temporário e substituído somente depois de concluído.
 
-Algumas configurações disponíveis:
+### Coleta incremental
 
-```bash
-python SOURCE/main.py \
-  --csv users.csv \
-  --bootstrap-server localhost:29092 \
-  --cycle-interval 3600 \
-  --media-limit 10 \
-  --stories-limit 10 \
-  --comments-limit 30 \
-  --delay-min 8 \
-  --delay-max 40
-```
+A cada ciclo, o coletor reobserva o perfil e as mídias recentes para preservar
+a série temporal. Comentários só são consultados quando a contagem da mídia
+aumenta; o resultado é mesclado ao `comments.json` sem duplicar IDs. Stories já
+salvos não são sobrescritos.
 
-Use `python SOURCE/main.py --help` para consultar todas as opções.
+## Docker
 
-## Execução com Docker
+O volume `data/` persiste tanto a sessão quanto os JSONs coletados:
 
-Kafka e aplicação possuem Composes separados. O Compose padrão constrói a aplicação localmente e é indicado para desenvolvimento. Inicie primeiro o Kafka:
-
-```bash
-docker compose -f kafka/docker-compose.yml up -d
-```
-
-Depois construa e inicie a aplicação:
-
-```bash
+```powershell
 docker compose up -d --build
-```
-
-Consulte os logs:
-
-```bash
 docker compose logs -f app
-```
-
-O Kafka UI fica disponível em:
-
-```text
-http://localhost:8081
-```
-
-### Caminhos personalizados com Docker
-
-Adicione ao `.env` os caminhos do host:
-
-```env
-IG_USERNAME=seu_usuario
-IG_PASSWORD=sua_senha
-KAFKA_BOOTSTRAP_SERVER=kafka:9092
-USERS_CSV_PATH=C:/dados/instagram/users.csv
-SESSION_DIR_PATH=C:/dados/instagram/session
-```
-
-Nesse exemplo, a sessão será persistida em:
-
-```text
-C:/dados/instagram/session/session.json
-```
-
-Se as variáveis não forem informadas, serão utilizados:
-
-- CSV: `./users.csv`
-- Diretório da sessão: `./data`
-- Arquivo da sessão: `./data/session.json`
-
-Em Linux, os caminhos podem ser definidos desta forma:
-
-```env
-USERS_CSV_PATH=/opt/instagram/users.csv
-SESSION_DIR_PATH=/opt/instagram/session
-```
-
-Os dois Composes compartilham a rede Docker `instagram-network`. Por isso, o Compose do Kafka deve ser iniciado antes do Compose da aplicação. A criação dos tópicos acontece no próprio produtor, então basta o broker estar acessível.
-
-## Imagem de produção
-
-O `SOURCE/Dockerfile` constrói a imagem da aplicação usando somente `SOURCE` como contexto. Em produção, prefira construir e publicar essa imagem no pipeline de CI/CD; o servidor deve apenas baixá-la e executá-la.
-
-Construa uma versão localmente ou no pipeline:
-
-```bash
-docker build -t seuusuario/instagram-coletor:1.0.0 .
-```
-
-Autentique-se e publique no Docker Hub:
-
-```bash
-docker login
-docker push seuusuario/instagram-coletor:1.0.0
-```
-
-Não reutilize a mesma tag para versões diferentes. Prefira tags imutáveis como `1.0.0` ou o hash do commit.
-
-### Injeção de variáveis em produção
-
-O Compose declara explicitamente as variáveis entregues ao container. `IG_USERNAME` e `IG_PASSWORD` são obrigatórias; a inicialização falhará antes de criar o container caso estejam ausentes.
-
-Mantenha o arquivo de produção fora do repositório, por exemplo:
-
-```text
-/etc/instagram-api/production.env
-```
-
-Conteúdo sugerido:
-
-```env
-APP_IMAGE=seuusuario/instagram-api:1.0.0
-IG_USERNAME=usuario_coletor
-IG_PASSWORD=senha_do_usuario
-KAFKA_BOOTSTRAP_SERVER=kafka.interno:9092
-USERS_CSV_PATH=/opt/instagram/config/users.csv
-SESSION_DIR_PATH=/var/lib/instagram/session
-```
-
-Proteja o arquivo no servidor:
-
-```bash
-sudo chown root:root /etc/instagram-api/production.env
-sudo chmod 600 /etc/instagram-api/production.env
-```
-
-O Compose de produção não cria Kafka e não exige uma rede Docker externa. `KAFKA_BOOTSTRAP_SERVER` deve apontar para um endereço que seja alcançável de dentro do container, como um DNS interno ou IP do servidor Kafka. O endereço anunciado pelo broker em `advertised.listeners` também precisa ser alcançável pelo container.
-
-Baixe a imagem versionada indicada por `APP_IMAGE`:
-
-```bash
-docker compose \
-  -f docker-compose.prod.yml \
-  --env-file /etc/instagram-api/production.env \
-  pull
-```
-
-Inicie o container de produção sem realizar build no servidor:
-
-```bash
-docker compose \
-  -f docker-compose.prod.yml \
-  --env-file /etc/instagram-api/production.env \
-  up -d
-```
-
-O parâmetro `--env-file` fornece valores para a interpolação do Compose. Apenas `IG_USERNAME`, `IG_PASSWORD` e `IG_SESSION_FILE` são inseridas como variáveis no container; a imagem, os caminhos do host, a rede e o endereço Kafka configuram o deployment.
-
-Para verificar a configuração resolvida sem iniciar containers:
-
-```bash
-docker compose \
-  -f docker-compose.prod.yml \
-  --env-file /etc/instagram-api/production.env \
-  config
-```
-
-Para atualizar a aplicação após publicar uma nova tag, altere `APP_IMAGE` no arquivo de produção e execute:
-
-```bash
-docker compose \
-  -f docker-compose.prod.yml \
-  --env-file /etc/instagram-api/production.env \
-  pull
-
-docker compose \
-  -f docker-compose.prod.yml \
-  --env-file /etc/instagram-api/production.env \
-  up -d
-```
-
-## Encerramento
-
-Pare somente a aplicação:
-
-```bash
 docker compose down
 ```
 
-Pare Kafka e Kafka UI sem excluir os dados:
+Variáveis de caminhos opcionais:
+
+```env
+USERS_CSV_PATH=C:/dados/instagram/users.csv
+SESSION_DIR_PATH=C:/dados/instagram
+```
+
+No container, `SESSION_DIR_PATH` é montado em `/app/data`; portanto os arquivos
+ficam em `SESSION_DIR_PATH/users/` e a sessão em
+`SESSION_DIR_PATH/session.json`.
+
+## Produção
+
+Defina `APP_IMAGE`, credenciais e volumes em um arquivo fora do repositório:
+
+```env
+APP_IMAGE=seuusuario/instagram-coletor:1.0.0
+IG_USERNAME=usuario_coletor
+IG_PASSWORD=senha_do_usuario
+USERS_CSV_PATH=/opt/instagram/users.csv
+SESSION_DIR_PATH=/var/lib/instagram
+```
+
+Depois execute:
 
 ```bash
-docker compose -f kafka/docker-compose.yml down
+docker compose -f docker-compose.prod.yml --env-file /etc/instagram/production.env pull
+docker compose -f docker-compose.prod.yml --env-file /etc/instagram/production.env up -d
 ```
 
-Os dados do Kafka permanecem no volume `kafka-data`. Não use `down -v` se desejar preservá-los.
+## Testes
 
-## Tópicos Kafka
-
-O Compose do Kafka cria automaticamente:
-
-```text
-instagram.tasks
-instagram.tasks.processed
-instagram.user.data
-instagram.media.data
-instagram.comments.data
-instagram.stories.data
-instagram.user.latest
-instagram.media.comments.latest
-instagram.user.stories.latest
-instagram.user.observations
-instagram.media.observations
+```powershell
+Set-Location SOURCE
+python -m unittest discover -v
 ```
-
-Os tópicos `*.latest` e `instagram.tasks.processed` utilizam compactação. Em um Kafka externo, esses tópicos precisam ser provisionados pela infraestrutura do servidor.
-
-## Série temporal de distribuição
-
-A cada ciclo, o coletor consulta novamente as mídias recentes e grava eventos
-imutáveis em `instagram.user.observations` e
-`instagram.media.observations`. As observações incluem horário da coleta, idade
-da publicação, seguidores, curtidas, comentários, visualizações e reproduções.
-
-Os campos `reach`, `impressions`, `non_follower_reach` e
-`hashtag_visible` ficam nulos quando a fonte não oferece essas métricas. Os
-tópicos locais têm retenção de 180 dias; em produção, envie-os também para um
-armazenamento analítico permanente.
-
-O número de posts reobservados é controlado por `--media-limit`. Esses dados
-permitem estimar redução de distribuição, mas não confirmar diretamente um
-shadowban.
