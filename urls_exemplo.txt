@@ -1,0 +1,17 @@
+# Arquivo de exemplo com URLs do Instagram para coleta
+# Uma URL por linha. Linhas começando com # são ignoradas.
+# Formatos suportados:
+# - Posts: https://www.instagram.com/p/CÓDIGO/
+# - Reels: https://www.instagram.com/reel/CÓDIGO/
+# - IGTV: https://www.instagram.com/tv/CÓDIGO/
+
+# Exemplo de Reels:
+# https://www.instagram.com/reel/C1234567890/
+# https://www.instagram.com/reel/ABCdef123/
+
+# Exemplo de Posts:
+# https://www.instagram.com/p/B1LbfVPlwIA/
+# https://www.instagram.com/p/B-fKL9qpeab/
+
+# Exemplo de IGTV:
+# https://www.instagram.com/tv/Cxyz789/

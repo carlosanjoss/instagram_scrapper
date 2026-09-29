@@ -1,3 +1,4 @@
+import os
 import random
 import time
 from collections.abc import Callable
@@ -6,6 +7,7 @@ from typing import Any
 
 from instagrapi import Client
 
+from src.auth.autenticacao import CompatibleInstagramClient
 from src.services.instagram.comment import CommentService
 from src.services.instagram.media import MediaService
 from src.services.instagram.story import StoryService
@@ -32,6 +34,7 @@ class InstagramJsonCollector:
     ) -> None:
         if min_delay_seconds < 0 or max_delay_seconds < min_delay_seconds:
             raise ValueError("Intervalo de pausa inválido")
+        self.client = client  # Guardar referência ao client para re-login
         self.repository = repository
         self.min_delay_seconds = min_delay_seconds
         self.max_delay_seconds = max_delay_seconds
@@ -47,7 +50,26 @@ class InstagramJsonCollector:
         print(f"Pausa ({context}) por {wait:.2f}s para reduzir padrão automatizado")
         self.sleep(wait)
 
+    def _ensure_session_valid(self) -> None:
+        """Garante que a sessão é válida, fazendo re-login se necessário."""
+        if isinstance(self.client, CompatibleInstagramClient):
+            if not self.client._is_session_valid():
+                print("Sessão inválida detectada durante coleta. Tentando re-login...")
+                username = (os.environ.get("IG_USERNAME") or "").strip()
+                password = os.environ.get("IG_PASSWORD") or ""
+                if username and password:
+                    self.client.login(username, password, relogin=True)
+                    # Salva a sessão atualizada
+                    from src.auth.autenticacao import SESSION_FILE
+                    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    self.client.dump_settings(str(SESSION_FILE))
+                    print("Re-login realizado e sessão salva.")
+                else:
+                    raise RuntimeError("Sessão expirada e não há credenciais (IG_USERNAME/IG_PASSWORD) para re-login automático.")
+
     def _call(self, operation: Callable[[], Any], context: str) -> Any:
+        # Valida sessão antes de cada operação crítica
+        self._ensure_session_valid()
         value = self.retry.execute(operation)
         self._delay(context)
         return value
@@ -84,7 +106,6 @@ class InstagramJsonCollector:
         stories_limit: int = 10,
         comments_limit: int = 30,
     ) -> dict[str, int | str]:
-        print(f"\nColetando @{username}")
         user = self._call(
             lambda: self.users.get_user_info_by_username(username),
             "user_info_by_username",
@@ -203,4 +224,101 @@ class InstagramJsonCollector:
             "media_observed": len(medias),
             "comments_added": comments_added,
             "stories_added": new_stories,
+        }
+
+    def collect_media_from_url(
+        self,
+        url: str,
+        comments_limit: int = 30,
+    ) -> dict[str, int | str]:
+        """Coleta uma mídia específica (post, reel, IGTV) a partir de sua URL."""
+        print(f"\nColetando mídia da URL: {url}")
+        media_model = self._call(
+            lambda: self.media.get_media_info_from_url(url),
+            "media_info_from_url",
+        )
+        payload = model_payload(media_model)
+        
+        # Extrai user_id do autor da mídia
+        user_data = payload.get("user", {})
+        raw_user_id = first_value(user_data, "pk", "id", "user_id")
+        if raw_user_id is None:
+            raise ValueError(f"Mídia da URL {url} retornada sem autor identificável")
+        user_id = str(raw_user_id)
+        username = user_data.get("username", "unknown")
+        
+        # Obtém followers_count do autor se disponível
+        followers_count = self._count(
+            user_data,
+            ("follower_count", "followers_count"),
+        )
+        
+        media_id = first_value(payload, "pk", "id", "media_id")
+        if media_id is None:
+            raise ValueError(f"Mídia da URL {url} retornada sem identificador")
+        media_id = str(media_id)
+        
+        previous_media = self.repository.load_media(user_id, media_id)
+        current_count = self._count(payload, ("comment_count", "comments_count"))
+        previous_count = self._count(previous_media, ("comment_count", "comments_count"))
+        
+        amount = comments_limit
+        comments_file_exists = self.repository.comments_path(user_id, media_id).exists()
+        should_fetch_comments = comments_limit > 0 and current_count != 0
+        if previous_count is not None and current_count is not None:
+            delta = current_count - previous_count
+            if delta <= 0 and comments_file_exists:
+                print(f"Sem novos comentários na mídia {media_id}")
+                should_fetch_comments = False
+            elif delta > 0:
+                amount = min(comments_limit, delta)
+        
+        comments_added = 0
+        if should_fetch_comments:
+            collected = self._call(
+                lambda media_id=media_id, amount=amount: self.comments.fetch_media_comments(
+                    media_id,
+                    amount=amount,
+                ),
+                "media_comments",
+            )
+            _, added = self.repository.save_comments(
+                user_id,
+                media_id,
+                (model_payload(comment) for comment in collected),
+            )
+            comments_added += added
+        
+        # Salva usuário se não existir
+        self.repository.save_user(user_data)
+        self.repository.save_user_observation(
+            user_id,
+            self._timestamped(
+                {
+                    "schema_version": 1,
+                    "user_id": user_id,
+                    "username": username,
+                    "followers_count": followers_count,
+                    "following_count": first_value(user_data, "following_count"),
+                    "media_count": self._media_count(user_data),
+                    "is_private": user_data.get("is_private"),
+                }
+            ),
+        )
+        
+        self.repository.save_media(user_id, payload)
+        self.repository.save_media_observation(
+            user_id,
+            media_id,
+            media_observation(payload, user_id, username, followers_count),
+        )
+        
+        print(
+            f"@{username} (mídia {media_id}): {comments_added} comentários novos"
+        )
+        return {
+            "username": username,
+            "user_id": user_id,
+            "media_id": media_id,
+            "comments_added": comments_added,
         }

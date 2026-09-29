@@ -59,6 +59,16 @@ def parse_args() -> argparse.Namespace:
         help="CSV com um username por linha (padrão: users.csv)",
     )
     parser.add_argument(
+        "--url",
+        dest="url",
+        help="URL específica de mídia (post, reel, IGTV) para coletar",
+    )
+    parser.add_argument(
+        "--urls-file",
+        dest="urls_file",
+        help="Arquivo com URLs de mídias (uma por linha)",
+    )
+    parser.add_argument(
         "--output",
         default="data",
         help="Diretório dos arquivos JSON (padrão: data)",
@@ -90,6 +100,20 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def load_urls_from_file(urls_file: str) -> List[str]:
+    path = Path(urls_file)
+    if not path.exists():
+        raise FileNotFoundError(f"Arquivo de URLs não encontrado: {urls_file}")
+
+    urls: List[str] = []
+    with path.open("r", encoding="utf-8") as file_obj:
+        for line in file_obj:
+            url = line.strip()
+            if url and not url.startswith("#"):
+                urls.append(url)
+    return urls
+
+
 def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
     client = login_with_persistence()
     repository = JsonRepository(args.output)
@@ -100,6 +124,38 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
         max_delay_seconds=args.delay_max,
     )
 
+    # Modo coleta por URL específica
+    if args.url:
+        try:
+            collector.collect_media_from_url(
+                args.url,
+                comments_limit=args.comments_limit,
+            )
+        except Exception as exc:
+            if RetryPolicy.is_fatal(exc):
+                raise
+            print(f"Falha ao coletar URL {args.url}: {exc}")
+        print(f"Dados JSON salvos em: {repository.output_dir.resolve()}")
+        return
+
+    # Modo coleta por arquivo de URLs
+    if args.urls_file:
+        urls = load_urls_from_file(args.urls_file)
+        print(f"\nColetando {len(urls)} URLs do arquivo")
+        for url in urls:
+            try:
+                collector.collect_media_from_url(
+                    url,
+                    comments_limit=args.comments_limit,
+                )
+            except Exception as exc:
+                if RetryPolicy.is_fatal(exc):
+                    raise
+                print(f"Falha ao coletar URL {url}; seguindo para a próxima: {exc}")
+        print(f"Dados JSON salvos em: {repository.output_dir.resolve()}")
+        return
+
+    # Modo padrão: coleta por usuários (com ciclos)
     cycle = 0
     try:
         while True:
@@ -129,7 +185,12 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
 if __name__ == "__main__":
     load_dotenv(find_dotenv())
     arguments = parse_args()
-    targets = load_usernames_from_csv(arguments.csv_path)
-    if not targets:
-        raise ValueError("Nenhum usuário encontrado no arquivo CSV")
-    run_pipeline(args=arguments, usernames=targets)
+    
+    # Modos de URL não precisam de CSV de usuários
+    if arguments.url or arguments.urls_file:
+        run_pipeline(args=arguments, usernames=[])
+    else:
+        targets = load_usernames_from_csv(arguments.csv_path)
+        if not targets:
+            raise ValueError("Nenhum usuário encontrado no arquivo CSV")
+        run_pipeline(args=arguments, usernames=targets)

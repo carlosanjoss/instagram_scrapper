@@ -48,18 +48,20 @@ python SOURCE/main.py
 Opções principais:
 
 ```text
---csv CAMINHO             CSV de usuários (padrão: users.csv)
---output DIRETORIO        raiz dos JSONs (padrão: data)
---media-limit N           mídias recentes por usuário (padrão: 10)
---stories-limit N         stories por usuário (padrão: 10)
---comments-limit N        comentários por mídia (padrão: 30)
---delay-min SEGUNDOS      pausa mínima entre chamadas (padrão: 8)
---delay-max SEGUNDOS      pausa máxima entre chamadas (padrão: 40)
---cycle-interval SEGUNDOS intervalo entre ciclos (padrão: 3600)
---once                    executa um único ciclo
+--csv CAMINHO              CSV de usuários (padrão: users.csv)
+--url URL                  URL específica de mídia (post, reel, IGTV) para coletar
+--urls-file CAMINHO        Arquivo com URLs de mídias (uma por linha)
+--output DIRETORIO         raiz dos JSONs (padrão: data)
+--media-limit N            mídias recentes por usuário (padrão: 10)
+--stories-limit N          stories por usuário (padrão: 10)
+--comments-limit N         comentários por mídia (padrão: 30)
+--delay-min SEGUNDOS       pausa mínima entre chamadas (padrão: 8)
+--delay-max SEGUNDOS       pausa máxima entre chamadas (padrão: 40)
+--cycle-interval SEGUNDOS  intervalo entre ciclos (padrão: 3600)
+--once                     executa um único ciclo
 ```
 
-Exemplo:
+Exemplo (coleta por usuários):
 
 ```powershell
 python SOURCE/main.py `
@@ -67,6 +69,24 @@ python SOURCE/main.py `
   --output data `
   --media-limit 20 `
   --stories-limit 10 `
+  --comments-limit 50 `
+  --once
+```
+
+Exemplo (coleta de uma mídia específica - post, reel ou IGTV):
+
+```powershell
+python SOURCE/main.py `
+  --url "https://www.instagram.com/reel/ABC123/" `
+  --comments-limit 100 `
+  --once
+```
+
+Exemplo (coleta de múltiplas URLs de um arquivo):
+
+```powershell
+python SOURCE/main.py `
+  --urls-file urls.txt `
   --comments-limit 50 `
   --once
 ```

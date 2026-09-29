@@ -1,4 +1,4 @@
-"""Autenticação com sessão persistente e compatibilidade com o login atual."""
+"""Autenticação com sessão persistente, validação e recuperação de challenges."""
 
 import os
 import time
@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from instagrapi import Client, config
-from instagrapi.exceptions import UnknownError
+from instagrapi.exceptions import (
+    UnknownError,
+    ChallengeRequired,
+    LoginRequired,
+    ClientError,
+    ClientJSONDecodeError,
+)
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +71,24 @@ class CompatibleInstagramClient(Client):
             self.relogin_attempt = 0
             return True
 
+    def _is_session_valid(self) -> bool:
+        """Verifica se a sessão atual ainda é válida fazendo uma requisição leve."""
+        try:
+            # Tenta buscar o usuário logado - requisição leve que valida a sessão
+            self.account_info()
+            return True
+        except (LoginRequired, ChallengeRequired, ClientJSONDecodeError):
+            return False
+        except ClientError as e:
+            # Erros como "feedback_required", "please_wait_few_minutes" também indicam sessão inválida
+            error_text = str(e).lower()
+            if any(marker in error_text for marker in (
+                "login_required", "challenge_required", "feedback_required",
+                "please wait", "suspicious", "automated"
+            )):
+                return False
+            raise
+
 
 def _configure_current_app(client: Client) -> None:
     installed_default = getattr(config, "DEFAULT_APP_VERSION", "")
@@ -73,6 +97,15 @@ def _configure_current_app(client: Client) -> None:
         return
     client.set_app(CURRENT_ANDROID_APP_PROFILE)
     client.set_user_agent()
+
+
+def _ensure_valid_session(client: CompatibleInstagramClient, username: str, password: str) -> None:
+    """Garante que a sessão é válida, fazendo re-login se necessário."""
+    if client._is_session_valid():
+        return
+
+    print("Sessão inválida ou expirada. Fazendo re-login...")
+    client.login(username, password, relogin=True)
 
 
 def login_with_persistence() -> Client:
@@ -92,6 +125,13 @@ def login_with_persistence() -> Client:
 
     if session_id:
         client.login_by_sessionid(session_id)
+        # Valida se o sessionid ainda funciona
+        if not client._is_session_valid():
+            print("SessionID inválido/expirado. Tentando login com usuário/senha...")
+            if username and password:
+                client.login(username, password)
+            else:
+                raise RuntimeError("SessionID expirado e não há credenciais de fallback (IG_USERNAME/IG_PASSWORD).")
     else:
         client.login(username, password)
 
@@ -102,9 +142,21 @@ def login_with_persistence() -> Client:
 
 def login_with_sessionid(sessionid: str) -> Client:
     """Retorna um cliente autenticado com um sessionid existente."""
+    username = (os.environ.get("IG_USERNAME") or "").strip()
+    password = os.environ.get("IG_PASSWORD") or ""
+    
     client = CompatibleInstagramClient()
     _configure_current_app(client)
     client.login_by_sessionid(sessionid)
+    
+    # Valida e faz fallback se necessário
+    if not client._is_session_valid():
+        print("SessionID inválido/expirado. Tentando login com usuário/senha...")
+        if username and password:
+            client.login(username, password)
+        else:
+            raise RuntimeError("SessionID expirado e não há credenciais de fallback.")
+    
     SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
     client.dump_settings(str(SESSION_FILE))
     return client

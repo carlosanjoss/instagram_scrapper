@@ -12,6 +12,11 @@ class MediaService:
         """Acesso direto à API para buscar detalhes de uma mídia."""
         return self.cl.media_info(media_id)
 
+    def get_media_info_from_url(self, url: str):
+        """Busca detalhes de uma mídia a partir de sua URL (post, reel, IGTV)."""
+        media_pk = self.cl.media_pk_from_url(url)
+        return self.cl.media_info(media_pk)
+
     def list_medias_users(self, username: str, amount: int = 10):
         """Listar os posts recentes de uma conta específica."""
         try:

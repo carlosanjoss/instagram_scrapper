@@ -25,9 +25,10 @@ class RetryPolicy:
         "challenge_required",
         "checkpoint_required",
         "loginrequired",
-        "requestsjsondecodeerror",
-        "jsondecodeerror",
         "mixins/challenge.py",
+        "jsondecodeerror",           # Instagram retorna HTML (login/challenge) em vez de JSON
+        "clientjsondecodeerror",     # instagrapi wrapper para JSONDecodeError
+        "expecting value",           # json.decoder.JSONDecodeError: Expecting value
     )
 
     def __init__(self, attempts: int = 3) -> None:
