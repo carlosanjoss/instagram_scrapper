@@ -4,9 +4,22 @@ class CommentService:
     def __init__(self, client: Client):
         self.cl = client
 
-    def fetch_media_comments(self, media_id: str, amount: int = 10):
+    @staticmethod
+    def _canonical_media_id(media_id: str, user_id: str | None = None) -> str:
+        value = str(media_id)
+        if "_" in value or not user_id:
+            return value
+        return f"{value}_{user_id}"
+
+    def fetch_media_comments(
+        self,
+        media_id: str,
+        amount: int = 10,
+        user_id: str | None = None,
+    ):
         """Acesso direto à API para uso no orquestrador."""
-        return self.cl.media_comments(media_id, amount=amount)
+        canonical_id = self._canonical_media_id(media_id, user_id)
+        return self.cl.media_comments(canonical_id, amount=amount)
 
     def get_comments(self, media_id: str, amount: int = 10):
         """Busca os comentários e retorna a lista bruta."""

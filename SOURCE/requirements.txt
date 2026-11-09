@@ -1,2 +1,2 @@
-instagrapi>=2.18.19,<3
+instagrapi>=3.0.16
 python-dotenv

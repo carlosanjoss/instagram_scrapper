@@ -50,27 +50,35 @@ class InstagramJsonCollector:
         print(f"Pausa ({context}) por {wait:.2f}s para reduzir padrão automatizado")
         self.sleep(wait)
 
-    def _ensure_session_valid(self) -> None:
-        """Garante que a sessão é válida, fazendo re-login se necessário."""
-        if isinstance(self.client, CompatibleInstagramClient):
-            if not self.client._is_session_valid():
-                print("Sessão inválida detectada durante coleta. Tentando re-login...")
-                username = (os.environ.get("IG_USERNAME") or "").strip()
-                password = os.environ.get("IG_PASSWORD") or ""
-                if username and password:
-                    self.client.login(username, password, relogin=True)
-                    # Salva a sessão atualizada
-                    from src.auth.autenticacao import SESSION_FILE
-                    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    self.client.dump_settings(str(SESSION_FILE))
-                    print("Re-login realizado e sessão salva.")
-                else:
-                    raise RuntimeError("Sessão expirada e não há credenciais (IG_USERNAME/IG_PASSWORD) para re-login automático.")
+    def _relogin(self) -> None:
+        """Refaz o login apenas quando a própria operação informa LoginRequired."""
+        username = (os.environ.get("IG_USERNAME") or "").strip()
+        password = os.environ.get("IG_PASSWORD") or ""
+        if not username or not password:
+            raise RuntimeError(
+                "Sessão expirada e não há credenciais "
+                "(IG_USERNAME/IG_PASSWORD) para re-login automático."
+            )
+        print("Sessão expirada durante a coleta. Tentando re-login...")
+        self.client.login(username, password, relogin=True)
+        from src.auth.autenticacao import SESSION_FILE
+
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.client.dump_settings(str(SESSION_FILE))
+        print("Re-login realizado e sessão salva.")
 
     def _call(self, operation: Callable[[], Any], context: str) -> Any:
-        # Valida sessão antes de cada operação crítica
-        self._ensure_session_valid()
-        value = self.retry.execute(operation)
+        try:
+            value = self.retry.execute(operation)
+        except Exception as exc:
+            if (
+                isinstance(self.client, CompatibleInstagramClient)
+                and RetryPolicy.is_login_required(exc)
+            ):
+                self._relogin()
+                value = self.retry.execute(operation)
+            else:
+                raise
         self._delay(context)
         return value
 
@@ -190,6 +198,7 @@ class InstagramJsonCollector:
                     lambda media_id=media_id, amount=amount: self.comments.fetch_media_comments(
                         media_id,
                         amount=amount,
+                        user_id=user_id,
                     ),
                     "media_comments",
                 )
@@ -279,6 +288,7 @@ class InstagramJsonCollector:
                 lambda media_id=media_id, amount=amount: self.comments.fetch_media_comments(
                     media_id,
                     amount=amount,
+                    user_id=user_id,
                 ),
                 "media_comments",
             )

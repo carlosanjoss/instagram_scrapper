@@ -1,5 +1,6 @@
 import argparse
 import csv
+import random
 from pathlib import Path
 from typing import List
 
@@ -85,6 +86,12 @@ def parse_args() -> argparse.Namespace:
         help="Intervalo entre ciclos em segundos (padrão: 3600)",
     )
     parser.add_argument(
+        "--rate-limit-cooldown",
+        type=int,
+        default=43200,
+        help="Pausa após bloqueio do Instagram, em segundos (padrão: 43200 = 12h)",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Executa somente um ciclo de coleta",
@@ -95,6 +102,8 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} não pode ser negativo")
     if args.cycle_interval <= 0:
         parser.error("--cycle-interval deve ser positivo")
+    if args.rate_limit_cooldown <= 0:
+        parser.error("--rate-limit-cooldown deve ser positivo")
     if args.delay_min < 0 or args.delay_max < args.delay_min:
         parser.error("o intervalo entre --delay-min e --delay-max é inválido")
     return args
@@ -132,6 +141,12 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
                 comments_limit=args.comments_limit,
             )
         except Exception as exc:
+            if RetryPolicy.is_rate_limited(exc):
+                print(
+                    "Instagram aplicou um limite temporário. A mídia foi adiada; "
+                    "os dados já salvos foram preservados."
+                )
+                return
             if RetryPolicy.is_fatal(exc):
                 raise
             print(f"Falha ao coletar URL {args.url}: {exc}")
@@ -149,6 +164,12 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
                     comments_limit=args.comments_limit,
                 )
             except Exception as exc:
+                if RetryPolicy.is_rate_limited(exc):
+                    print(
+                        "Instagram aplicou um limite temporário. As URLs restantes "
+                        "foram adiadas; os dados já salvos foram preservados."
+                    )
+                    break
                 if RetryPolicy.is_fatal(exc):
                     raise
                 print(f"Falha ao coletar URL {url}; seguindo para a próxima: {exc}")
@@ -161,6 +182,7 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
         while True:
             cycle += 1
             print(f"\nCiclo #{cycle} - coletando {len(usernames)} usuários")
+            rate_limited = False
             for username in usernames:
                 try:
                     collector.collect_user(
@@ -170,14 +192,25 @@ def run_pipeline(args: argparse.Namespace, usernames: List[str]) -> None:
                         comments_limit=args.comments_limit,
                     )
                 except Exception as exc:
+                    if RetryPolicy.is_rate_limited(exc):
+                        rate_limited = True
+                        print(
+                            "Instagram aplicou um limite temporário. Interrompendo "
+                            "este ciclo sem perder os dados já salvos."
+                        )
+                        break
                     if RetryPolicy.is_fatal(exc):
                         raise
                     print(f"Falha ao coletar @{username}; seguindo para o próximo: {exc}")
             print(f"Dados JSON salvos em: {repository.output_dir.resolve()}")
             if args.once:
                 return
-            print(f"Próximo ciclo em {args.cycle_interval}s...")
-            collector.sleep(args.cycle_interval)
+            wait_seconds = (
+                args.rate_limit_cooldown if rate_limited else args.cycle_interval
+            )
+            reason = "bloqueio temporário" if rate_limited else "intervalo normal"
+            print(f"Próximo ciclo em {wait_seconds}s ({reason})...")
+            collector.sleep(wait_seconds)
     except KeyboardInterrupt:
         print("\nColeta encerrada pelo usuário.")
 
@@ -193,4 +226,5 @@ if __name__ == "__main__":
         targets = load_usernames_from_csv(arguments.csv_path)
         if not targets:
             raise ValueError("Nenhum usuário encontrado no arquivo CSV")
+        random.shuffle(targets)
         run_pipeline(args=arguments, usernames=targets)

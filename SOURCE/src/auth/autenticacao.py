@@ -3,73 +3,25 @@
 import os
 import time
 from pathlib import Path
-from typing import Any
 
-from instagrapi import Client, config
+from instagrapi import Client
 from instagrapi.exceptions import (
-    UnknownError,
     ChallengeRequired,
     LoginRequired,
     ClientError,
     ClientJSONDecodeError,
 )
 
+from src.utils.retry import RetryPolicy
+
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = SOURCE_ROOT.parent if SOURCE_ROOT.name == "SOURCE" else SOURCE_ROOT
 SESSION_FILE = Path(os.environ.get("IG_SESSION_FILE", PROJECT_ROOT / "session.json"))
 
-# Perfil proposto no upstream para substituir o perfil 428, recusado pelo
-# Instagram com error_type=needs_upgrade desde agosto de 2026.
-CURRENT_ANDROID_APP_PROFILE = {
-    "app_version": "446.0.0.49.77",
-    "version_code": "385211303",
-    "bloks_versioning_id": (
-        "935a519904e9017324cdedb64a283a3c2c1a3d5b0bbc698b451f5aef72cc11df"
-    ),
-}
-
-
-def _version_tuple(value: Any) -> tuple[int, ...]:
-    try:
-        return tuple(int(part) for part in str(value).split("."))
-    except (TypeError, ValueError):
-        return ()
-
 
 class CompatibleInstagramClient(Client):
-    """Usa o fluxo CAA quando o endpoint legado exige atualização."""
-
-    def login(
-        self,
-        username: str | None = None,
-        password: str | None = None,
-        relogin: bool = False,
-        verification_code: str = "",
-    ) -> bool:
-        try:
-            return super().login(
-                username=username,
-                password=password,
-                relogin=relogin,
-                verification_code=verification_code,
-            )
-        except UnknownError as exc:
-            error_type = str(getattr(exc, "error_type", "") or "").strip().lower()
-            if error_type != "needs_upgrade":
-                raise
-
-            logged = self._try_caa_login(
-                exc,
-                verification_code=verification_code,
-            )
-            if not logged:
-                raise
-
-            self.login_flow()
-            self.last_login = time.time()
-            self.relogin_attempt = 0
-            return True
+    """Cliente compatível com validação de sessão aprimorada."""
 
     def _is_session_valid(self) -> bool:
         """Verifica se a sessão atual ainda é válida fazendo uma requisição leve."""
@@ -80,23 +32,14 @@ class CompatibleInstagramClient(Client):
         except (LoginRequired, ChallengeRequired, ClientJSONDecodeError):
             return False
         except ClientError as e:
-            # Erros como "feedback_required", "please_wait_few_minutes" também indicam sessão inválida
+            # Limites como feedback_required não invalidam a sessão. Fazer
+            # novo login durante o bloqueio aumenta o risco de prolongá-lo.
             error_text = str(e).lower()
             if any(marker in error_text for marker in (
-                "login_required", "challenge_required", "feedback_required",
-                "please wait", "suspicious", "automated"
+                "login_required", "challenge_required", "suspicious"
             )):
                 return False
             raise
-
-
-def _configure_current_app(client: Client) -> None:
-    installed_default = getattr(config, "DEFAULT_APP_VERSION", "")
-    required_version = CURRENT_ANDROID_APP_PROFILE["app_version"]
-    if _version_tuple(installed_default) >= _version_tuple(required_version):
-        return
-    client.set_app(CURRENT_ANDROID_APP_PROFILE)
-    client.set_user_agent()
 
 
 def _ensure_valid_session(client: CompatibleInstagramClient, username: str, password: str) -> None:
@@ -106,6 +49,30 @@ def _ensure_valid_session(client: CompatibleInstagramClient, username: str, pass
 
     print("Sessão inválida ou expirada. Fazendo re-login...")
     client.login(username, password, relogin=True)
+
+
+def _login_with_retry(client: CompatibleInstagramClient, username: str, password: str) -> None:
+    """Faz login com retry apenas em limite de taxa (429) do Instagram."""
+    last_exc: BaseException | None = None
+    for attempt in range(1, 4):
+        try:
+            client.login(username, password)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if RetryPolicy.is_rate_limited(exc):
+                cooldown = 30 * attempt
+                print(
+                    f"Instagram limitou o login (429). Tentativa {attempt}/3. "
+                    f"Aguardando {cooldown}s antes de tentar novamente."
+                )
+                time.sleep(cooldown)
+                continue
+            if RetryPolicy.is_login_required(exc):
+                raise
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def login_with_persistence() -> Client:
@@ -121,7 +88,13 @@ def login_with_persistence() -> Client:
     client = CompatibleInstagramClient()
     if SESSION_FILE.exists():
         client.load_settings(str(SESSION_FILE), override_app_version=True)
-    _configure_current_app(client)
+        # Sessão já salva: reusa sem logar novamente (evita 429 de login repetido)
+        try:
+            if client._is_session_valid():
+                return client
+        except Exception:
+            # Instagram indisponível ou limitando validação; segue para login
+            print("Não foi possível validar a sessão salva. Tentando logar...")
 
     if session_id:
         client.login_by_sessionid(session_id)
@@ -129,15 +102,28 @@ def login_with_persistence() -> Client:
         if not client._is_session_valid():
             print("SessionID inválido/expirado. Tentando login com usuário/senha...")
             if username and password:
-                client.login(username, password)
+                _login_with_retry(client, username, password)
             else:
                 raise RuntimeError("SessionID expirado e não há credenciais de fallback (IG_USERNAME/IG_PASSWORD).")
     else:
-        client.login(username, password)
+        _login_with_retry(client, username, password)
 
     SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
     client.dump_settings(str(SESSION_FILE))
+
+    _apply_proxy(client)
     return client
+
+
+def _apply_proxy(client: CompatibleInstagramClient) -> None:
+    """Aplica proxy rotativo (residencial/móvel) se IG_PROXY estiver definido."""
+    proxy = os.environ.get("IG_PROXY", "").strip()
+    if proxy:
+        try:
+            client.set_proxy(proxy)
+            print(f"Proxy configurado: {proxy.split('@')[-1] if '@' in proxy else proxy}")
+        except Exception as exc:
+            print(f"Não foi possível definir proxy na sessão: {exc}")
 
 
 def login_with_sessionid(sessionid: str) -> Client:
@@ -146,7 +132,6 @@ def login_with_sessionid(sessionid: str) -> Client:
     password = os.environ.get("IG_PASSWORD") or ""
     
     client = CompatibleInstagramClient()
-    _configure_current_app(client)
     client.login_by_sessionid(sessionid)
     
     # Valida e faz fallback se necessário
@@ -159,4 +144,6 @@ def login_with_sessionid(sessionid: str) -> Client:
     
     SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
     client.dump_settings(str(SESSION_FILE))
+
+    _apply_proxy(client)
     return client

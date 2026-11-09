@@ -10,6 +10,7 @@ from src.services.storage import JsonRepository
 class FakeInstagramClient:
     def __init__(self) -> None:
         self.comments_calls = 0
+        self.last_comments_media_id = None
 
     def user_info_by_username_v1(self, username):
         return {
@@ -37,6 +38,7 @@ class FakeInstagramClient:
 
     def media_comments(self, media_id, amount):
         self.comments_calls += 1
+        self.last_comments_media_id = media_id
         return [{"pk": "comment-1", "media_id": media_id, "text": "comentário"}][:amount]
 
 
@@ -61,6 +63,7 @@ class InstagramJsonCollectorTests(unittest.TestCase):
             self.assertEqual(first["comments_added"], 1)
             self.assertEqual(second["comments_added"], 0)
             self.assertEqual(client.comments_calls, 1)
+            self.assertEqual(client.last_comments_media_id, "media-1_user-1")
             self.assertEqual(len(json.loads(comments_path.read_text(encoding="utf-8"))), 1)
             self.assertEqual(len(json.loads(observations_path.read_text(encoding="utf-8"))), 2)
 

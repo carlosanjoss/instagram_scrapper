@@ -1,53 +1,30 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from instagrapi import Client
-from instagrapi.exceptions import UnknownError
+from instagrapi.exceptions import FeedbackRequired, LoginRequired
 
 from src.auth.autenticacao import (
-    CURRENT_ANDROID_APP_PROFILE,
     CompatibleInstagramClient,
     PROJECT_ROOT,
     SESSION_FILE,
-    _configure_current_app,
 )
 
 
 class AuthenticationTests(unittest.TestCase):
-    def test_needs_upgrade_uses_caa_login_fallback(self) -> None:
+    def test_feedback_required_is_not_treated_as_expired_session(self) -> None:
         client = CompatibleInstagramClient()
-        client._try_caa_login = Mock(return_value=True)
-        client.login_flow = Mock()
-        error = UnknownError(
-            "Your version of Instagram is out of date.",
-            error_type="needs_upgrade",
+        client.account_info = Mock(
+            side_effect=FeedbackRequired("feedback_required: action limited")
         )
 
-        with patch.object(Client, "login", side_effect=error):
-            logged = client.login("usuario", "senha")
+        with self.assertRaises(FeedbackRequired):
+            client._is_session_valid()
 
-        self.assertTrue(logged)
-        client._try_caa_login.assert_called_once_with(error, verification_code="")
-        client.login_flow.assert_called_once_with()
-
-    def test_unrelated_unknown_error_is_preserved(self) -> None:
+    def test_login_required_marks_session_as_invalid(self) -> None:
         client = CompatibleInstagramClient()
-        error = UnknownError("erro diferente", error_type="outro")
+        client.account_info = Mock(side_effect=LoginRequired("login_required"))
 
-        with patch.object(Client, "login", side_effect=error):
-            with self.assertRaises(UnknownError):
-                client.login("usuario", "senha")
-
-    def test_updates_an_outdated_instagram_app_profile(self) -> None:
-        client = CompatibleInstagramClient()
-
-        _configure_current_app(client)
-
-        self.assertEqual(
-            client.device_settings["app_version"],
-            CURRENT_ANDROID_APP_PROFILE["app_version"],
-        )
-        self.assertIn(CURRENT_ANDROID_APP_PROFILE["app_version"], client.user_agent)
+        self.assertFalse(client._is_session_valid())
 
     def test_default_session_is_saved_in_repository_root(self) -> None:
         self.assertEqual(SESSION_FILE, PROJECT_ROOT / "session.json")

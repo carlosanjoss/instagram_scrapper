@@ -14,6 +14,7 @@ Crie um `.env` na raiz:
 ```env
 IG_USERNAME=seu_usuario
 IG_PASSWORD=sua_senha
+IG_PROXY=http://usuario:senha@host:porta  # opcional: proxy residencial/móvel rotativo
 ```
 
 A sessão autenticada é reutilizada pelo arquivo `session.json`. O `.env`, a
@@ -58,6 +59,7 @@ Opções principais:
 --delay-min SEGUNDOS       pausa mínima entre chamadas (padrão: 8)
 --delay-max SEGUNDOS       pausa máxima entre chamadas (padrão: 40)
 --cycle-interval SEGUNDOS  intervalo entre ciclos (padrão: 3600)
+--rate-limit-cooldown SEGUNDOS  pausa após bloqueio do Instagram (padrão: 43200 = 12h)
 --once                     executa um único ciclo
 ```
 
